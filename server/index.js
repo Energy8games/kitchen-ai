@@ -1,4 +1,6 @@
+import compression from 'compression';
 import cors from 'cors';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 
@@ -12,12 +14,33 @@ const corsOrigin = process.env.CORS_ORIGIN || '*';
 // Trust proxy headers (required behind Traefik / reverse proxy)
 app.set('trust proxy', true);
 
+app.use(compression());
 app.use(express.json({ limit: '12mb' }));
 app.use(
   cors({
     origin: corsOrigin === '*' ? true : corsOrigin.split(',').map((o) => o.trim()),
   }),
 );
+
+// Temporary in-memory image store (auto-expires after 10 min)
+const imageStore = new Map();
+const IMAGE_TTL = 10 * 60 * 1000;
+
+function storeImage(buf, mime) {
+  const id = crypto.randomBytes(16).toString('hex');
+  imageStore.set(id, { buf, mime });
+  setTimeout(() => imageStore.delete(id), IMAGE_TTL);
+  return id;
+}
+
+// Serve stored images as binary — small JSON + fast streamed download
+app.get('/api/image/:id', (req, res) => {
+  const entry = imageStore.get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'expired or not found' });
+  res.set('Content-Type', entry.mime);
+  res.set('Cache-Control', 'public, max-age=600');
+  res.send(entry.buf);
+});
 
 const fetchWithRetry = async (url, options = {}, maxRetries = 5, label = '') => {
   let delay = 1000;
@@ -289,7 +312,7 @@ app.post('/api/image', async (req, res) => {
       signal: AbortSignal.timeout(MODEL_TIMEOUT),
     }, 1, `imagen:${model}`);
     const base64 = response?.predictions?.[0]?.bytesBase64Encoded;
-    return base64 ? `data:image/png;base64,${base64}` : null;
+    return base64 ? { base64, mime: 'image/png' } : null;
   };
 
   const tryGeminiImage = async (model) => {
@@ -307,10 +330,12 @@ app.post('/api/image', async (req, res) => {
       1,
       `gemini-image:${model}`,
     );
-    const base64 = response?.candidates?.[0]?.content?.parts?.find(
+    const part = response?.candidates?.[0]?.content?.parts?.find(
       (p) => p.inlineData,
-    )?.inlineData?.data;
-    return base64 ? `data:image/png;base64,${base64}` : null;
+    );
+    const base64 = part?.inlineData?.data;
+    const mime = part?.inlineData?.mimeType || 'image/png';
+    return base64 ? { base64, mime } : null;
   };
 
   // Sequential fallback: try each model one at a time, stop on first success
@@ -322,23 +347,31 @@ app.post('/api/image', async (req, res) => {
   ];
 
   try {
-    let imageDataUrl = null;
+    let base64 = null;
+    let mime = 'image/png';
     for (const tryModel of models) {
       try {
-        imageDataUrl = await tryModel();
-        if (imageDataUrl) break;
+        const result = await tryModel();
+        if (result) { base64 = result.base64; mime = result.mime; break; }
       } catch (err) {
         console.error(`[/api/image] model error:`, err.message);
       }
     }
 
-    if (imageDataUrl) {
+    if (base64) {
       console.log(`[/api/image] Success for "${recipeTitle}"`);
+      // Store as binary buffer, return a URL instead of inline base64
+      const buf = Buffer.from(base64, 'base64');
+      const id = storeImage(buf, mime);
+      const protocol = req.protocol;
+      const host = req.get('host');
+      const imageUrl = `${protocol}://${host}/api/image/${id}`;
+      // Return both for backwards compat: URL (preferred) + inline data
+      res.json({ imageUrl, imageDataUrl: `data:${mime};base64,${base64}` });
     } else {
       console.error(`[/api/image] All models failed for "${recipeTitle}"`);
+      res.json({ imageUrl: null, imageDataUrl: null });
     }
-
-    res.json({ imageDataUrl: imageDataUrl || null });
   } catch (err) {
     console.error(`[/api/image] Unhandled error for "${recipeTitle}":`, err.message);
     res.status(500).json({ error: 'Image request failed' });

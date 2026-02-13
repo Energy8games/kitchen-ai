@@ -481,7 +481,7 @@ const App: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ recipeTitle, language }),
       });
-      return res?.imageDataUrl || null;
+      return res?.imageUrl || res?.imageDataUrl || null;
     } catch (e) {
       console.error('Image request failed.');
       return null;
