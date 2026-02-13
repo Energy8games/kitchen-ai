@@ -73,9 +73,8 @@ app.get('/api/image-diagnostics', async (req, res) => {
   const models = [
     { type: 'imagen', model: 'imagen-4.0-generate-001' },
     { type: 'imagen', model: 'imagen-4.0-fast-generate-001' },
-    { type: 'gemini', model: 'gemini-2.0-flash-exp' },
-    { type: 'gemini', model: 'gemini-2.0-flash-preview-image-generation' },
-    { type: 'gemini', model: 'gemini-2.5-flash-preview-04-17' },
+    { type: 'imagen', model: 'imagen-4.0-ultra-generate-001' },
+    { type: 'gemini', model: 'gemini-2.5-flash-preview-native-audio-dialog' },
   ];
 
   const results = [];
@@ -277,7 +276,7 @@ app.post('/api/image', async (req, res) => {
   }
 
   const prompt = `Gourmet cinematic food photography of ${recipeTitle}, exquisite plating, professional lighting, 4k`;
-  const errors = [];
+  const MODEL_TIMEOUT = 15_000;
 
   const tryImagen = async (model) => {
     const response = await fetchWithRetry(imagenUrl(model), {
@@ -287,10 +286,10 @@ app.post('/api/image', async (req, res) => {
         instances: { prompt },
         parameters: { sampleCount: 1 },
       }),
+      signal: AbortSignal.timeout(MODEL_TIMEOUT),
     }, 1, `imagen:${model}`);
     const base64 = response?.predictions?.[0]?.bytesBase64Encoded;
-    if (base64) return `data:image/png;base64,${base64}`;
-    throw new Error(`${model}: no image`);
+    return base64 ? `data:image/png;base64,${base64}` : null;
   };
 
   const tryGeminiImage = async (model) => {
@@ -303,6 +302,7 @@ app.post('/api/image', async (req, res) => {
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { responseModalities: ['IMAGE'] },
         }),
+        signal: AbortSignal.timeout(MODEL_TIMEOUT),
       },
       1,
       `gemini-image:${model}`,
@@ -310,37 +310,32 @@ app.post('/api/image', async (req, res) => {
     const base64 = response?.candidates?.[0]?.content?.parts?.find(
       (p) => p.inlineData,
     )?.inlineData?.data;
-    if (base64) return `data:image/png;base64,${base64}`;
-    throw new Error(`${model}: no image`);
+    return base64 ? `data:image/png;base64,${base64}` : null;
   };
 
-  // Hard timeout so the client isn't left hanging
-  const TIMEOUT_MS = 25_000;
+  // Sequential fallback: try each model one at a time, stop on first success
+  const models = [
+    () => tryImagen('imagen-4.0-fast-generate-001'),
+    () => tryImagen('imagen-4.0-generate-001'),
+    () => tryImagen('imagen-4.0-ultra-generate-001'),
+    () => tryGeminiImage('gemini-2.5-flash-preview-native-audio-dialog'),
+  ];
 
   try {
-    // Race ALL models in parallel — first success wins
-    const imageDataUrl = await Promise.any([
-      tryImagen('imagen-4.0-generate-001'),
-      tryImagen('imagen-4.0-fast-generate-001'),
-      tryImagen('imagen-4.0-ultra-generate-001'),
-      tryGeminiImage('gemini-2.0-flash-exp'),
-      tryGeminiImage('gemini-2.0-flash-preview-image-generation'),
-      tryGeminiImage('gemini-2.5-flash-preview-04-17'),
-      // Timeout sentinel — rejects after TIMEOUT_MS so Promise.any keeps going,
-      // but if ALL real attempts also reject, this controls how long we wait.
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS),
-      ),
-    ]).catch((aggErr) => {
-      // AggregateError — all promises rejected
-      const reasons = aggErr.errors?.map((e) => e.message) || [aggErr.message];
-      reasons.forEach((r) => errors.push(r));
-      console.error(`[/api/image] All models failed for "${recipeTitle}":`, reasons);
-      return null;
-    });
+    let imageDataUrl = null;
+    for (const tryModel of models) {
+      try {
+        imageDataUrl = await tryModel();
+        if (imageDataUrl) break;
+      } catch (err) {
+        console.error(`[/api/image] model error:`, err.message);
+      }
+    }
 
     if (imageDataUrl) {
       console.log(`[/api/image] Success for "${recipeTitle}"`);
+    } else {
+      console.error(`[/api/image] All models failed for "${recipeTitle}"`);
     }
 
     res.json({ imageDataUrl: imageDataUrl || null });
