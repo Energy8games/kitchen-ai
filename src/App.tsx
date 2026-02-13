@@ -230,7 +230,7 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'kitchen-ai-pwa';
-const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5050';
+const apiBase = import.meta.env.VITE_API_BASE_URL || '';
 
 // Функция запроса с экспоненциальной задержкой
 const fetchWithRetry = async (
