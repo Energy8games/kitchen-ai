@@ -367,10 +367,10 @@ app.post('/api/image', async (req, res) => {
       const host = req.get('host');
       const imageUrl = `${protocol}://${host}/api/image/${id}`;
       // Return both for backwards compat: URL (preferred) + inline data
-      res.json({ imageUrl, imageDataUrl: `data:${mime};base64,${base64}` });
+      res.json({ imageUrl });
     } else {
       console.error(`[/api/image] All models failed for "${recipeTitle}"`);
-      res.json({ imageUrl: null, imageDataUrl: null });
+      res.json({ imageUrl: null });
     }
   } catch (err) {
     console.error(`[/api/image] Unhandled error for "${recipeTitle}":`, err.message);
