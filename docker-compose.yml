@@ -16,6 +16,10 @@ services:
       # Entrypoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
+      # Increase transport timeouts for slow clients (image generation)
+      - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=60s"
+      - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=60s"
+      - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=120s"
       # HTTP → HTTPS redirect
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
@@ -76,6 +80,11 @@ services:
       - "traefik.http.routers.backend.tls.certresolver=letsencrypt"
       - "traefik.http.routers.backend.priority=10"
       - "traefik.http.services.backend.loadbalancer.server.port=5050"
+      # Increase timeouts for long image generation requests
+      - "traefik.http.middlewares.backend-timeout.buffering.maxResponseBodyBytes=15000000"
+      - "traefik.http.routers.backend.middlewares=backend-timeout"
+      - "traefik.http.services.backend.loadbalancer.server.scheme=http"
+      - "traefik.http.services.backend.loadbalancer.responseForwarding.flushInterval=100ms"
     networks:
       - web
 

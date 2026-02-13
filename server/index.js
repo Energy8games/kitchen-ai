@@ -19,19 +19,27 @@ app.use(
   }),
 );
 
-const fetchWithRetry = async (url, options = {}, maxRetries = 5) => {
+const fetchWithRetry = async (url, options = {}, maxRetries = 5, label = '') => {
   let delay = 1000;
   for (let i = 0; i < maxRetries; i += 1) {
     try {
       const response = await fetch(url, options);
       if (response.ok) return await response.json();
-      if (response.status === 429 || response.status >= 500) {
+
+      const status = response.status;
+      let errorBody = '';
+      try { errorBody = await response.text(); } catch (_) {}
+      console.error(`[fetchWithRetry] ${label} attempt ${i + 1}/${maxRetries} — HTTP ${status}: ${errorBody.slice(0, 500)}`);
+
+      if (status === 429 || status >= 500) {
         await new Promise((r) => setTimeout(r, delay));
         delay *= 2;
         continue;
       }
+      // Non-retryable error (403, 400, 451, etc.)
       return null;
     } catch (err) {
+      console.error(`[fetchWithRetry] ${label} attempt ${i + 1}/${maxRetries} — network error:`, err.message);
       if (i === maxRetries - 1) throw err;
       await new Promise((r) => setTimeout(r, delay));
       delay *= 2;
@@ -56,6 +64,45 @@ const imagenUrl = (model) =>
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
+});
+
+// Diagnostic endpoint to check which image models are accessible from this server
+app.get('/api/image-diagnostics', async (req, res) => {
+  if (!requireApiKey(res)) return;
+
+  const models = [
+    { type: 'imagen', model: 'imagen-4.0-generate-001' },
+    { type: 'imagen', model: 'imagen-4.0-fast-generate-001' },
+    { type: 'gemini', model: 'gemini-2.0-flash-exp' },
+    { type: 'gemini', model: 'gemini-2.0-flash-preview-image-generation' },
+    { type: 'gemini', model: 'gemini-2.5-flash-preview-04-17' },
+  ];
+
+  const results = [];
+  for (const { type, model } of models) {
+    const url =
+      type === 'imagen' ? imagenUrl(model) : geminiUrl(model);
+    const body =
+      type === 'imagen'
+        ? { instances: { prompt: 'red apple' }, parameters: { sampleCount: 1 } }
+        : {
+            contents: [{ parts: [{ text: 'red apple' }] }],
+            generationConfig: { responseModalities: ['IMAGE'] },
+          };
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      results.push({ model, status: response.status, ok: response.ok });
+    } catch (err) {
+      results.push({ model, status: 'network_error', error: err.message });
+    }
+  }
+
+  console.log('[image-diagnostics]', JSON.stringify(results, null, 2));
+  res.json({ results });
 });
 
 app.post('/api/vision', async (req, res) => {
@@ -92,6 +139,8 @@ app.post('/api/vision', async (req, res) => {
           generationConfig: { responseMimeType: 'application/json' },
         }),
       },
+      5,
+      'vision',
     );
 
     const resultText =
@@ -137,6 +186,8 @@ Schema: { "title": "string", "description": "string", "prepTime": "string", "dif
           generationConfig: { responseMimeType: 'application/json' },
         }),
       },
+      5,
+      'recipe',
     );
 
     const rawText =
@@ -174,6 +225,8 @@ app.post('/api/meal-plan', async (req, res) => {
           generationConfig: { responseMimeType: 'application/json' },
         }),
       },
+      5,
+      'meal-plan',
     );
     const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
     const plan = JSON.parse(text);
@@ -205,6 +258,8 @@ app.post('/api/drinks', async (req, res) => {
           generationConfig: { responseMimeType: 'application/json' },
         }),
       },
+      5,
+      'drinks',
     );
     const text = response?.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
     res.json(JSON.parse(text));
@@ -222,6 +277,7 @@ app.post('/api/image', async (req, res) => {
   }
 
   const prompt = `Gourmet cinematic food photography of ${recipeTitle}, exquisite plating, professional lighting, 4k`;
+  const errors = [];
 
   const tryImagen = async (model) => {
     const response = await fetchWithRetry(imagenUrl(model), {
@@ -231,36 +287,65 @@ app.post('/api/image', async (req, res) => {
         instances: { prompt },
         parameters: { sampleCount: 1 },
       }),
-    });
+    }, 1, `imagen:${model}`);
     const base64 = response?.predictions?.[0]?.bytesBase64Encoded;
-    return base64 ? `data:image/png;base64,${base64}` : null;
+    if (base64) return `data:image/png;base64,${base64}`;
+    throw new Error(`${model}: no image`);
   };
 
-  try {
-    let imageDataUrl = await tryImagen('imagen-4.0-generate-001');
-    if (!imageDataUrl) imageDataUrl = await tryImagen('imagen-4.0-fast-generate-001');
-    if (!imageDataUrl) imageDataUrl = await tryImagen('imagen-4.0-ultra-generate-001');
+  const tryGeminiImage = async (model) => {
+    const response = await fetchWithRetry(
+      geminiUrl(model),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ['IMAGE'] },
+        }),
+      },
+      1,
+      `gemini-image:${model}`,
+    );
+    const base64 = response?.candidates?.[0]?.content?.parts?.find(
+      (p) => p.inlineData,
+    )?.inlineData?.data;
+    if (base64) return `data:image/png;base64,${base64}`;
+    throw new Error(`${model}: no image`);
+  };
 
-    if (!imageDataUrl) {
-      const response = await fetchWithRetry(
-        geminiUrl('gemini-2.5-flash-image-preview'),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseModalities: ['IMAGE'] },
-          }),
-        },
-      );
-      const base64 = response?.candidates?.[0]?.content?.parts?.find(
-        (p) => p.inlineData,
-      )?.inlineData?.data;
-      if (base64) imageDataUrl = `data:image/png;base64,${base64}`;
+  // Hard timeout so the client isn't left hanging
+  const TIMEOUT_MS = 25_000;
+
+  try {
+    // Race ALL models in parallel — first success wins
+    const imageDataUrl = await Promise.any([
+      tryImagen('imagen-4.0-generate-001'),
+      tryImagen('imagen-4.0-fast-generate-001'),
+      tryImagen('imagen-4.0-ultra-generate-001'),
+      tryGeminiImage('gemini-2.0-flash-exp'),
+      tryGeminiImage('gemini-2.0-flash-preview-image-generation'),
+      tryGeminiImage('gemini-2.5-flash-preview-04-17'),
+      // Timeout sentinel — rejects after TIMEOUT_MS so Promise.any keeps going,
+      // but if ALL real attempts also reject, this controls how long we wait.
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS),
+      ),
+    ]).catch((aggErr) => {
+      // AggregateError — all promises rejected
+      const reasons = aggErr.errors?.map((e) => e.message) || [aggErr.message];
+      reasons.forEach((r) => errors.push(r));
+      console.error(`[/api/image] All models failed for "${recipeTitle}":`, reasons);
+      return null;
+    });
+
+    if (imageDataUrl) {
+      console.log(`[/api/image] Success for "${recipeTitle}"`);
     }
 
     res.json({ imageDataUrl: imageDataUrl || null });
   } catch (err) {
+    console.error(`[/api/image] Unhandled error for "${recipeTitle}":`, err.message);
     res.status(500).json({ error: 'Image request failed' });
   }
 });
