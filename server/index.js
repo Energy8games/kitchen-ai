@@ -9,6 +9,9 @@ const port = Number(process.env.PORT) || 5050;
 const apiKey = process.env.GOOGLE_API_KEY || '';
 const corsOrigin = process.env.CORS_ORIGIN || '*';
 
+// Trust proxy headers (required behind Traefik / reverse proxy)
+app.set('trust proxy', true);
+
 app.use(express.json({ limit: '12mb' }));
 app.use(
   cors({
