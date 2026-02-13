@@ -8,7 +8,7 @@ dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT) || 5050;
-const apiKey = process.env.GOOGLE_API_KEY || '';
+const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
 const corsOrigin = process.env.CORS_ORIGIN || '*';
 
 // Trust proxy headers (required behind Traefik / reverse proxy)
@@ -73,7 +73,7 @@ const fetchWithRetry = async (url, options = {}, maxRetries = 5, label = '') => 
 
 const requireApiKey = (res) => {
   if (!apiKey) {
-    res.status(500).json({ error: 'Missing GOOGLE_API_KEY' });
+    res.status(500).json({ error: 'Missing GEMINI_API_KEY' });
     return false;
   }
   return true;
@@ -225,16 +225,98 @@ Schema: { "title": "string", "description": "string", "prepTime": "string", "dif
   }
 });
 
-app.post('/api/meal-plan', async (req, res) => {
+// Create 3 recipe suggestions (array), matching the frontend schema
+app.post('/api/recipes', async (req, res) => {
   if (!requireApiKey(res)) return;
-  const { title, language } = req.body || {};
+  const { ingredients, language, diet } = req.body || {};
+  if (!Array.isArray(ingredients) || ingredients.length === 0) {
+    res.status(400).json({ error: 'ingredients are required' });
+    return;
+  }
+
+  const targetLang = language === 'ru' ? 'Russian' : 'English';
+  const systemPrompt = `Michelin Chef. Create 3 distinct recipes based on the ingredients provided. Respond ONLY with a JSON array of 3 objects.\n` +
+    `Schema for each object: { "title": "str", "description": "str", "prepTime": "str", "difficulty": "str", ` +
+    `"nutrition": {"calories": num, "protein": "str", "fat": "str", "carbs": "str"}, ` +
+    `"ingredientsList": ["str"], "instructions": ["str"] } in ${targetLang}. Diet: ${diet || 'none'}.`;
+
+  try {
+    const response = await fetchWithRetry(
+      geminiUrl('gemini-2.5-flash-preview-09-2025'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Ingredients: ${ingredients.join(', ')}` }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+      },
+      5,
+      'recipes',
+    );
+
+    const rawText = response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = cleaned ? JSON.parse(cleaned) : [];
+    res.json(Array.isArray(parsed) ? parsed : [parsed]);
+  } catch (err) {
+    res.status(500).json({ error: 'Recipes request failed' });
+  }
+});
+
+// Create one detailed recipe by title (used when clicking meal plan items)
+app.post('/api/recipe-detail', async (req, res) => {
+  if (!requireApiKey(res)) return;
+  const { title, language, diet } = req.body || {};
   if (!title) {
     res.status(400).json({ error: 'title is required' });
     return;
   }
 
   const targetLang = language === 'ru' ? 'Russian' : 'English';
-  const prompt = `Based on recipe "${title}" create a weekly meal plan in ${targetLang}. JSON: [{day: "Day", meal: "Dish"}].`;
+  const systemPrompt = `Expert Chef. Create a detailed recipe for "${title}". Respond ONLY valid JSON object with schema: ` +
+    `{ "title": "str", "description": "str", "prepTime": "str", "difficulty": "str", ` +
+    `"nutrition": {"calories": num, "protein": "str", "fat": "str", "carbs": "str"}, ` +
+    `"ingredientsList": ["str"], "instructions": ["str"] } in ${targetLang}. Diet: ${diet || 'none'}.`;
+
+  try {
+    const response = await fetchWithRetry(
+      geminiUrl('gemini-2.5-flash-preview-09-2025'),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: `Recipe for: ${title}` }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+      },
+      5,
+      'recipe-detail',
+    );
+
+    const rawText = response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const cleaned = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const parsed = cleaned ? JSON.parse(cleaned) : null;
+    res.json(parsed || {});
+  } catch (err) {
+    res.status(500).json({ error: 'Recipe detail request failed' });
+  }
+});
+
+app.post('/api/meal-plan', async (req, res) => {
+  if (!requireApiKey(res)) return;
+  const { title, language, diet } = req.body || {};
+  if (!title) {
+    res.status(400).json({ error: 'title is required' });
+    return;
+  }
+
+  const targetLang = language === 'ru' ? 'Russian' : 'English';
+  const dietCtx = diet && diet !== 'none' ? `Diet: ${diet}.` : '';
+  const prompt = `Based on the dish "${title}", create a balanced 7-day meal plan. Return JSON array of 7 objects. ` +
+    `Schema: { "day": "Day Name", "breakfast": "Dish", "lunch": "Dish", "dinner": "Dish" }. Use ${targetLang}. ${dietCtx}`;
 
   try {
     const response = await fetchWithRetry(
@@ -260,14 +342,15 @@ app.post('/api/meal-plan', async (req, res) => {
 
 app.post('/api/drinks', async (req, res) => {
   if (!requireApiKey(res)) return;
-  const { title, language } = req.body || {};
+  const { title, language, diet } = req.body || {};
   if (!title) {
     res.status(400).json({ error: 'title is required' });
     return;
   }
 
   const targetLang = language === 'ru' ? 'Russian' : 'English';
-  const prompt = `Suggest drinks for "${title}" in ${targetLang}. JSON: {alcohol: "text", nonAlcohol: "text"}.`;
+  const dietCtx = diet && diet !== 'none' ? `Diet: ${diet}.` : '';
+  const prompt = `Suggest drinks for "${title}" in ${targetLang}. ${dietCtx} JSON: {alcohol: "text", nonAlcohol: "text"}.`;
 
   try {
     const response = await fetchWithRetry(
@@ -292,13 +375,16 @@ app.post('/api/drinks', async (req, res) => {
 
 app.post('/api/image', async (req, res) => {
   if (!requireApiKey(res)) return;
-  const { recipeTitle } = req.body || {};
-  if (!recipeTitle) {
-    res.status(400).json({ error: 'recipeTitle is required' });
+  const { recipeTitle, prompt } = req.body || {};
+  if (!recipeTitle && !prompt) {
+    res.status(400).json({ error: 'recipeTitle or prompt is required' });
     return;
   }
 
-  const prompt = `Gourmet cinematic food photography of ${recipeTitle}, exquisite plating, professional lighting, 4k`;
+  const finalPrompt =
+    typeof prompt === 'string' && prompt.trim().length > 0
+      ? prompt.trim()
+      : `Gourmet cinematic food photography of ${recipeTitle}, exquisite plating, professional lighting, 4k`;
   const MODEL_TIMEOUT = 15_000;
 
   const tryImagen = async (model) => {
@@ -306,7 +392,7 @@ app.post('/api/image', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        instances: { prompt },
+        instances: [{ prompt: finalPrompt }],
         parameters: { sampleCount: 1 },
       }),
       signal: AbortSignal.timeout(MODEL_TIMEOUT),
@@ -322,7 +408,7 @@ app.post('/api/image', async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ parts: [{ text: finalPrompt }] }],
           generationConfig: { responseModalities: ['IMAGE'] },
         }),
         signal: AbortSignal.timeout(MODEL_TIMEOUT),
@@ -359,18 +445,19 @@ app.post('/api/image', async (req, res) => {
     }
 
     if (base64) {
-      console.log(`[/api/image] Success for "${recipeTitle}"`);
-      // Store as binary buffer, return a URL instead of inline base64
+      // Return inline data for persistence in client caches/Firestore.
+      const imageBase64 = `data:${mime};base64,${base64}`;
+
+      // Also provide a short-lived URL option.
       const buf = Buffer.from(base64, 'base64');
       const id = storeImage(buf, mime);
       const protocol = req.protocol;
       const host = req.get('host');
       const imageUrl = `${protocol}://${host}/api/image/${id}`;
-      // Return both for backwards compat: URL (preferred) + inline data
-      res.json({ imageUrl });
+
+      res.json({ imageBase64, imageUrl });
     } else {
-      console.error(`[/api/image] All models failed for "${recipeTitle}"`);
-      res.json({ imageUrl: null });
+      res.json({ imageBase64: null, imageUrl: null });
     }
   } catch (err) {
     console.error(`[/api/image] Unhandled error for "${recipeTitle}":`, err.message);
