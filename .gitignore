@@ -33,3 +33,6 @@ letsencrypt/
 
 # Local Netlify folder
 .netlify
+
+package-lock.json*
+package-lock.json
