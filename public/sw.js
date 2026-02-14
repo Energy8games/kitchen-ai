@@ -1,13 +1,11 @@
-const CACHE_NAME = 'kitchen-ai-cache-v5';
+const CACHE_NAME = 'kitchen-ai-cache-v6';
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
-  '/sw.js',
   '/firebase-config.js',
   '/logo192.png',
   '/logo512.png',
-  '/vite.svg',
 ];
 
 self.addEventListener('install', (event) => {

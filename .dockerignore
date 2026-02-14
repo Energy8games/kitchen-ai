@@ -1,7 +1,7 @@
 node_modules
 dist
 dist-ssr
-server/node_modules
+server/
 .git
 .gitignore
 .env
@@ -12,3 +12,5 @@ server/node_modules
 .idea
 .DS_Store
 letsencrypt
+Docker*
+docker-compose*

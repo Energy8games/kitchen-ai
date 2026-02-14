@@ -1,3 +1,9 @@
 node_modules
 .env
+.env.*
 npm-debug.log
+Dockerfile
+*.md
+.DS_Store
+.vscode
+.idea

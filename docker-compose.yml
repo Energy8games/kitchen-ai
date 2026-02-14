@@ -70,9 +70,11 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
+      - NODE_ENV=production
       - PORT=5050
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}          # deprecated fallback
+      - CORS_ORIGIN=${CORS_ORIGIN:-}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.backend.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)"

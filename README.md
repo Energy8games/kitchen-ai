@@ -1,66 +1,36 @@
-# Backend API
+# Kitchen.AI
 
-We moved AI calls to a separate Node/Express backend.
+AI-powered recipe generator: scan ingredients with your camera, get gourmet recipes from Google Gemini, generate food photos with Imagen.
 
-### Backend setup
+## Quick Start
 
-1. Create a `.env` file in `server/` based on `server/.env.example`.
-2. Install deps and run the server:
+### Backend
 
 ```bash
 cd server
+cp .env.example .env   # fill in GEMINI_API_KEY
 npm install
 npm run dev
 ```
 
-## Backend API
-
-We moved AI calls to a separate Node/Express backend.
-
-### Backend setup
-
-1. Create a `.env` file in `server/` based on `server/.env.example`.
-2. Install deps and run the server:
+### Frontend
 
 ```bash
-cd server
+cp .env.example .env   # set VITE_API_BASE_URL=http://localhost:5050
 npm install
 npm run dev
 ```
 
-The default API base URL is `http://localhost:5050`.
+## Features
 
-### Frontend setup
-
-Set the API base URL in your frontend env:
-
-```
-VITE_API_BASE_URL=http://localhost:5050
-```
-
-The default API base URL is `http://localhost:5050`.
-
-### Frontend setup
-
-Set the API base URL in your frontend env:
-
-```
-VITE_API_BASE_URL=http://localhost:5050
-```
-
-# Kitchen.AI - Ваш личный Шеф-повар 🍳
-
-A modern AI-powered recipe generator built with React, TypeScript, and Vite. Generate personalized recipes based on ingredients you have, powered by Google's Gemini API with beautiful UI using Tailwind CSS.
-
-## Features ✨
-
-- 🤖 **AI Recipe Generation** - Create recipes using Google Gemini API
-- 🖼️ **AI Food Photography** - Generated images of dishes using Imagen API
-- ❤️ **Favorites System** - Save your favorite recipes with Firebase
-- 🔍 **Smart Suggestions** - Ingredient autocomplete with 80+ common foods
-- 📱 **Fully Responsive** - Beautiful on desktop, tablet, and mobile
-- 🎨 **Modern UI** - Built with Tailwind CSS and Lucide icons
-- 🔐 **Secure Auth** - Anonymous Firebase authentication
+- **AI Recipe Generation** — Google Gemini API
+- **AI Food Photography** — Imagen API
+- **Live Camera Scanner** — detect ingredients in real time
+- **Voice Input** — dictate ingredients
+- **Favorites** — Firebase Auth + Firestore
+- **Meal Plans & Drink Pairing** — weekly plans from a single dish
+- **PWA** — installable, works offline
+- **Bilingual** — Russian / English
 
 ## Tech Stack
 

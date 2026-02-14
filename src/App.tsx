@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth,
@@ -8,7 +8,6 @@ import {
   onAuthStateChanged,
   setPersistence,
   signInWithPopup,
-  signInWithCustomToken,
   OAuthProvider,
   signOut,
 } from 'firebase/auth';
@@ -728,7 +727,6 @@ const db = (() => {
   // Force long-polling to maximize compatibility (esp. iOS/WebView/strict proxies).
   try {
     return initializeFirestore(app, {
-      experimentalForceLongPolling: true,
       experimentalAutoDetectLongPolling: true,
       useFetchStreams: false,
     } as any);
@@ -948,6 +946,8 @@ const App: React.FC = () => {
   const didSetPersistenceRef = useRef(false);
   const lastAccountUidRef = useRef<string | null>(null);
   const cloudFavoritesRef = useRef<FavoriteRecipe[]>([]);
+  const isScanningAIRef = useRef(false);
+  const ingredientsRef = useRef<string[]>([]);
 
   // Prefer auth.currentUser as the source of truth to avoid stale React state.
   const effectiveUser = auth.currentUser ?? user;
@@ -964,6 +964,15 @@ const App: React.FC = () => {
   useEffect(() => {
     cloudFavoritesRef.current = cloudFavorites;
   }, [cloudFavorites]);
+
+  // Keep refs in sync for interval/event-handler closures
+  useEffect(() => {
+    isScanningAIRef.current = isScanningAI;
+  }, [isScanningAI]);
+
+  useEffect(() => {
+    ingredientsRef.current = ingredients;
+  }, [ingredients]);
 
   // --- SUGGESTIONS LOGIC ---
   useEffect(() => {
@@ -1024,11 +1033,6 @@ const App: React.FC = () => {
     ensurePersistence().catch(() => {
       // ignore
     });
-
-    // Optional: support custom token environments if provided.
-    if (typeof window.__initial_auth_token === 'string' && window.__initial_auth_token) {
-      signInWithCustomToken(auth, window.__initial_auth_token).catch((e) => console.error('Auth error', e));
-    }
 
     return onAuthStateChanged(auth, setUser);
   }, []);
@@ -1105,6 +1109,18 @@ const App: React.FC = () => {
     );
   }, [user]);
 
+  const nextStep = useCallback(
+    () => setCurrentStep((prev) => {
+      const r = recipe;
+      return r ? Math.min(prev + 1, r.instructions.length - 1) : prev;
+    }),
+    [recipe],
+  );
+  const prevStep = useCallback(
+    () => setCurrentStep((prev) => Math.max(0, prev - 1)),
+    [],
+  );
+
   // --- VOICE LOGIC ---
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -1117,37 +1133,42 @@ const App: React.FC = () => {
       recognition.onstart = () => setIsListening(true);
       recognition.onend = () => setIsListening(false);
       recognition.onerror = () => setIsListening(false);
-      recognition.onresult = (e: any) => {
-        const text = e?.results?.[0]?.[0]?.transcript || '';
-        if (!text) return;
-
-        if (view === 'cooking') {
-          const lower = text.toLowerCase();
-          if (lower.includes(language === 'ru' ? 'далее' : 'next')) nextStep();
-          if (lower.includes(language === 'ru' ? 'назад' : 'back')) prevStep();
-        } else {
-          const splitBy = language === 'ru' ? /[,]| и /i : /[,]| and /i;
-          const words = text
-            .split(splitBy)
-            .map((w: string) => w.trim())
-            .filter((w: string) => w.length > 1);
-          words.forEach((word: string) => addIngredient(word));
-        }
-      };
       recognitionRef.current = recognition;
     }
 
     recognitionRef.current.lang = language === 'ru' ? 'ru-RU' : 'en-US';
-  }, [language, view]);
 
-  const signInGoogle = async () => {
+    // Update onresult handler so it captures fresh nextStep/prevStep.
+    recognitionRef.current.onresult = (e: any) => {
+      const text = e?.results?.[0]?.[0]?.transcript || '';
+      if (!text) return;
+
+      if (view === 'cooking') {
+        const lower = text.toLowerCase();
+        if (lower.includes(language === 'ru' ? 'далее' : 'next')) nextStep();
+        if (lower.includes(language === 'ru' ? 'назад' : 'back')) prevStep();
+      } else {
+        const splitBy = language === 'ru' ? /[,]| и /i : /[,]| and /i;
+        const words = text
+          .split(splitBy)
+          .map((w: string) => w.trim())
+          .filter((w: string) => w.length > 1);
+        words.forEach((word: string) => addIngredient(word));
+      }
+    };
+  }, [language, view, nextStep, prevStep]);
+
+  const signInGoogle = () => signInWithProvider(new GoogleAuthProvider());
+  const signInApple = () => signInWithProvider(new OAuthProvider('apple.com'));
+
+  const signInWithProvider = async (provider: GoogleAuthProvider | OAuthProvider) => {
     setErrorState(null);
     if (!appId) {
       setErrorState(language === 'ru' ? 'Не загружен appId (firebase-config.js).' : 'Missing appId (firebase-config.js).');
       return;
     }
     try {
-      const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+      const cred = await signInWithPopup(auth, provider);
       const u = cred.user;
       if (u && guestFavorites.length > 0) {
         await Promise.allSettled(
@@ -1169,42 +1190,9 @@ const App: React.FC = () => {
       }
       setShowAuth(false);
     } catch (e) {
-      console.error('Google sign-in error', e);
-      setErrorState(language === 'ru' ? 'Не удалось войти через Google.' : 'Google sign-in failed.');
-    }
-  };
-
-  const signInApple = async () => {
-    setErrorState(null);
-    if (!appId) {
-      setErrorState(language === 'ru' ? 'Не загружен appId (firebase-config.js).' : 'Missing appId (firebase-config.js).');
-      return;
-    }
-    try {
-      const cred = await signInWithPopup(auth, new OAuthProvider('apple.com'));
-      const u = cred.user;
-      if (u && guestFavorites.length > 0) {
-        await Promise.allSettled(
-          guestFavorites.map(async (r) => {
-            const id = safeRecipeIdFromTitle(r.title);
-            const { id: _ignoreId, ...data } = (r as any) || {};
-            let finalImage: string | null = r.image || null;
-            if (finalImage && finalImage.startsWith('data:image/')) {
-              finalImage = await compressImage(finalImage);
-            }
-            await setDoc(doc(db, 'artifacts', appId, 'users', u.uid, 'favorites', id), {
-              ...data,
-              image: finalImage,
-              timestamp: Date.now(),
-            });
-          }),
-        );
-        setGuestFavorites([]);
-      }
-      setShowAuth(false);
-    } catch (e) {
-      console.error('Apple sign-in error', e);
-      setErrorState(language === 'ru' ? 'Не удалось войти через Apple.' : 'Apple sign-in failed.');
+      console.error('Sign-in error', e);
+      const providerName = provider instanceof GoogleAuthProvider ? 'Google' : 'Apple';
+      setErrorState(language === 'ru' ? `Не удалось войти через ${providerName}.` : `${providerName} sign-in failed.`);
     }
   };
 
@@ -1261,7 +1249,7 @@ const App: React.FC = () => {
   }, []);
 
   const captureAndAnalyze = async () => {
-    if (!videoRef.current || !canvasRef.current || isScanningAI) return;
+    if (!videoRef.current || !canvasRef.current || isScanningAIRef.current) return;
 
     const canvas = canvasRef.current;
     const video = videoRef.current;
@@ -1293,7 +1281,14 @@ const App: React.FC = () => {
       const data = await res.json().catch(() => ({}));
       const detected = data?.ingredients;
       if (Array.isArray(detected)) {
-        detected.forEach((item: string) => addIngredient(item));
+        // Use ref to get fresh ingredients state for dedup
+        const current = ingredientsRef.current;
+        detected.forEach((item: string) => {
+          const normalized = normalizeIngredient(item);
+          if (normalized && !current.includes(normalized)) {
+            addIngredient(item);
+          }
+        });
       }
     } catch {
       // ignore
@@ -1440,10 +1435,6 @@ const App: React.FC = () => {
       setIsMealLoading(false);
     }
   };
-
-  const nextStep = () =>
-    recipe && setCurrentStep((prev) => Math.min(prev + 1, recipe.instructions.length - 1));
-  const prevStep = () => setCurrentStep((prev) => Math.max(0, prev - 1));
 
   const toggleFavorite = async (r: Recipe) => {
     if (!appId) {
@@ -2399,22 +2390,6 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `
-        @keyframes scanner-line {
-          0% { transform: translateY(0); opacity: 0; }
-          10% { opacity: 1; }
-          90% { opacity: 1; }
-          100% { transform: translateY(256px); opacity: 0; }
-        }
-        .animate-scanner-line {
-          animation: scanner-line 2s linear infinite;
-        }
-      `,
-        }}
-      />
 
       {errorState && (
         <div className="fixed bottom-[calc(2.5rem+var(--safe-bottom))] left-1/2 -translate-x-1/2 bg-[#1A1A1A] text-white px-10 py-6 rounded-3xl shadow-2xl flex items-center gap-5 z-[100] animate-in slide-in-from-bottom-12 border border-white/5 mx-4 w-[90%] md:w-auto">

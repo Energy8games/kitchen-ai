@@ -58,3 +58,14 @@ body {
 .file-input-hidden {
   display: none;
 }
+
+/* Scanner line animation */
+@keyframes scanner-line {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(256px); opacity: 0; }
+}
+.animate-scanner-line {
+  animation: scanner-line 2s linear infinite;
+}
