@@ -7,8 +7,8 @@ WORKDIR /app
 # Create non-root user
 RUN addgroup -S appuser && adduser -S appuser -G appuser
 
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+COPY package.json ./
+RUN npm i 
 
 COPY . ./
 
