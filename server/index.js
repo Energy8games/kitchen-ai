@@ -164,45 +164,6 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-// Diagnostic endpoint — disabled in production
-if (process.env.NODE_ENV !== 'production') {
-  app.get('/api/image-diagnostics', async (req, res) => {
-    if (!requireApiKey(res)) return;
-
-    const models = [
-      { type: 'imagen', model: IMAGEN_MODELS[1] },
-      { type: 'imagen', model: IMAGEN_MODELS[0] },
-      { type: 'imagen', model: IMAGEN_MODELS[2] },
-      { type: 'gemini', model: GEMINI_IMAGE_MODEL },
-    ];
-
-    const results = [];
-    for (const { type, model } of models) {
-      const url = type === 'imagen' ? imagenUrl(model) : geminiUrl(model);
-      const body =
-        type === 'imagen'
-          ? { instances: { prompt: 'red apple' }, parameters: { sampleCount: 1 } }
-          : {
-              contents: [{ parts: [{ text: 'red apple' }] }],
-              generationConfig: { responseModalities: ['IMAGE'] },
-            };
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: googleApiHeaders,
-          body: JSON.stringify(body),
-        });
-        results.push({ model, status: response.status, ok: response.ok });
-      } catch (err) {
-        results.push({ model, status: 'network_error', error: err.message });
-      }
-    }
-
-    console.log('[image-diagnostics]', JSON.stringify(results, null, 2));
-    res.json({ results });
-  });
-}
-
 app.post('/api/vision', async (req, res) => {
   if (!requireApiKey(res)) return;
   const { imageBase64, mimeType, language } = req.body || {};
@@ -542,10 +503,10 @@ app.post('/api/image', async (req, res) => {
 
   // Sequential fallback: try each model one at a time, stop on first success
   const models = [
+    () => tryGeminiImage(GEMINI_IMAGE_MODEL),
     () => tryImagen(IMAGEN_MODELS[0]),
     () => tryImagen(IMAGEN_MODELS[1]),
     () => tryImagen(IMAGEN_MODELS[2]),
-    () => tryGeminiImage(GEMINI_IMAGE_MODEL),
   ];
 
   try {
