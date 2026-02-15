@@ -17,7 +17,9 @@ const IMAGEN_MODELS = [
 const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-preview-native-audio-dialog';
 const BODY_LIMIT = '12mb';
 const IMAGE_TTL = 10 * 60 * 1000;          // 10 min
+const IMAGE_MAX_ENTRIES = 200;             // max images in memory (~200–1000 MB cap)
 const MODEL_TIMEOUT = 15_000;              // 15 s
+const FETCH_TIMEOUT = 60_000;              // 60 s for text endpoints
 const MAX_INGREDIENTS = 50;
 const MAX_INGREDIENT_LENGTH = 100;
 const MAX_TITLE_LENGTH = 200;
@@ -71,10 +73,15 @@ app.use('/api/meal-plan', apiLimiter);
 app.use('/api/drinks', apiLimiter);
 app.use('/api/image', imageLimiter);
 
-// Temporary in-memory image store (auto-expires after IMAGE_TTL)
+// Temporary in-memory image store (auto-expires after IMAGE_TTL, capped at IMAGE_MAX_ENTRIES)
 const imageStore = new Map();
 
 function storeImage(buf, mime) {
+  // Evict oldest entries if at capacity
+  while (imageStore.size >= IMAGE_MAX_ENTRIES) {
+    const oldestKey = imageStore.keys().next().value;
+    imageStore.delete(oldestKey);
+  }
   const id = crypto.randomBytes(16).toString('hex');
   imageStore.set(id, { buf, mime });
   setTimeout(() => imageStore.delete(id), IMAGE_TTL);
@@ -161,7 +168,16 @@ const validateTitle = (title) => {
 };
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true });
+  const mem = process.memoryUsage();
+  res.json({
+    ok: true,
+    memory: {
+      rss: `${(mem.rss / 1024 / 1024).toFixed(1)} MB`,
+      heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB`,
+      heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MB`,
+    },
+    imageStoreSize: imageStore.size,
+  });
 });
 
 app.post('/api/vision', async (req, res) => {
@@ -208,6 +224,7 @@ app.post('/api/vision', async (req, res) => {
           ],
           generationConfig: { responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
       5,
       'vision',
@@ -257,6 +274,7 @@ Schema: { "title": "string", "description": "string", "prepTime": "string", "dif
           systemInstruction: { parts: [{ text: systemPrompt }] },
           generationConfig: { responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
       5,
       'recipe',
@@ -308,6 +326,7 @@ app.post('/api/recipes', async (req, res) => {
           systemInstruction: { parts: [{ text: systemPrompt }] },
           generationConfig: { responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
       5,
       'recipes',
@@ -355,6 +374,7 @@ app.post('/api/recipe-detail', async (req, res) => {
           systemInstruction: { parts: [{ text: systemPrompt }] },
           generationConfig: { responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
       5,
       'recipe-detail',
@@ -399,6 +419,7 @@ app.post('/api/meal-plan', async (req, res) => {
           contents: [{ parts: [{ text: `Dish: ${title}` }] }],
           generationConfig: { responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
       5,
       'meal-plan',
@@ -436,6 +457,7 @@ app.post('/api/drinks', async (req, res) => {
           contents: [{ parts: [{ text: `Dish: ${title}` }] }],
           generationConfig: { responseMimeType: 'application/json' },
         }),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT),
       },
       5,
       'drinks',
