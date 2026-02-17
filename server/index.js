@@ -7,7 +7,7 @@ import rateLimit from 'express-rate-limit';
 dotenv.config();
 
 // ── Constants ───────────────────────────────────────────────────────────
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-09-2025';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
 const IMAGEN_MODELS = [
   'imagen-4.0-fast-generate-001',
   'imagen-4.0-generate-001',
