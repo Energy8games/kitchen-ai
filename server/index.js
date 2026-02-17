@@ -1,6 +1,5 @@
 import compression from 'compression';
 import cors from 'cors';
-import crypto from 'crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
@@ -16,8 +15,7 @@ const IMAGEN_MODELS = [
 ];
 const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-preview-native-audio-dialog';
 const BODY_LIMIT = '12mb';
-const IMAGE_TTL = 10 * 60 * 1000;          // 10 min
-const IMAGE_MAX_ENTRIES = 200;             // max images in memory (~200–1000 MB cap)
+
 const MODEL_TIMEOUT = 15_000;              // 15 s
 const FETCH_TIMEOUT = 60_000;              // 60 s for text endpoints
 const MAX_INGREDIENTS = 50;
@@ -73,29 +71,7 @@ app.use('/api/meal-plan', apiLimiter);
 app.use('/api/drinks', apiLimiter);
 app.use('/api/image', imageLimiter);
 
-// Temporary in-memory image store (auto-expires after IMAGE_TTL, capped at IMAGE_MAX_ENTRIES)
-const imageStore = new Map();
 
-function storeImage(buf, mime) {
-  // Evict oldest entries if at capacity
-  while (imageStore.size >= IMAGE_MAX_ENTRIES) {
-    const oldestKey = imageStore.keys().next().value;
-    imageStore.delete(oldestKey);
-  }
-  const id = crypto.randomBytes(16).toString('hex');
-  imageStore.set(id, { buf, mime });
-  setTimeout(() => imageStore.delete(id), IMAGE_TTL);
-  return id;
-}
-
-// Serve stored images as binary — small JSON + fast streamed download
-app.get('/api/image/:id', (req, res) => {
-  const entry = imageStore.get(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'expired or not found' });
-  res.set('Content-Type', entry.mime);
-  res.set('Cache-Control', 'public, max-age=600');
-  res.send(entry.buf);
-});
 
 const fetchWithRetry = async (url, options = {}, maxRetries = 5, label = '') => {
   let delay = 1000;
@@ -176,7 +152,7 @@ app.get('/api/health', (req, res) => {
       heapUsed: `${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB`,
       heapTotal: `${(mem.heapTotal / 1024 / 1024).toFixed(1)} MB`,
     },
-    imageStoreSize: imageStore.size,
+
   });
 });
 
@@ -544,19 +520,10 @@ app.post('/api/image', async (req, res) => {
     }
 
     if (base64) {
-      // Return inline data for persistence in client caches/Firestore.
       const imageBase64 = `data:${mime};base64,${base64}`;
-
-      // Also provide a short-lived URL option.
-      const buf = Buffer.from(base64, 'base64');
-      const id = storeImage(buf, mime);
-      const protocol = req.protocol;
-      const host = req.get('host');
-      const imageUrl = `${protocol}://${host}/api/image/${id}`;
-
-      res.json({ imageBase64, imageUrl });
+      res.json({ imageBase64 });
     } else {
-      res.json({ imageBase64: null, imageUrl: null });
+      res.json({ imageBase64: null });
     }
   } catch (err) {
     console.error(`[/api/image] Unhandled error for "${recipeTitle}":`, err.message);
