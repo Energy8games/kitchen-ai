@@ -1,35 +1,7 @@
 services:
   # ============================================
-  # Traefik — Reverse Proxy (HTTP only, SSL on external nginx)
-  # ============================================
-  traefik:
-    image: traefik:v3.3
-    restart: unless-stopped
-    command:
-      # API / Dashboard
-      - "--api.dashboard=true"
-      - "--api.insecure=false"
-      # Docker provider
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--providers.docker.network=web"
-      # Entrypoints
-      - "--entrypoints.web.address=:80"
-      # Increase transport timeouts for slow clients (image generation)
-      - "--entrypoints.web.transport.respondingTimeouts.readTimeout=60s"
-      - "--entrypoints.web.transport.respondingTimeouts.writeTimeout=60s"
-      - "--entrypoints.web.transport.respondingTimeouts.idleTimeout=120s"
-      # Logging
-      - "--log.level=INFO"
-    ports:
-      - "80:80"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - web
-
-  # ============================================
   # Frontend — Vite React SPA (nginx)
+  # Also proxies /api requests to the backend
   # ============================================
   frontend:
     build:
@@ -40,17 +12,13 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
-      - "traefik.http.routers.frontend.entrypoints=web"
-      - "traefik.http.routers.frontend.priority=1"
-      - "traefik.http.services.frontend.loadbalancer.server.port=80"
+    ports:
+      - "80:80"
     networks:
-      - web
+      - internal
 
   # ============================================
-  # Backend — Express API
+  # Backend — Express API (internal only)
   # ============================================
   backend:
     build:
@@ -63,20 +31,9 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}          # deprecated fallback
       - CORS_ORIGIN=${CORS_ORIGIN:-}
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.backend.rule=PathPrefix(`/api`)"
-      - "traefik.http.routers.backend.entrypoints=web"
-      - "traefik.http.routers.backend.priority=10"
-      - "traefik.http.services.backend.loadbalancer.server.port=5050"
-      # Increase timeouts for long image generation requests
-      - "traefik.http.middlewares.backend-timeout.buffering.maxResponseBodyBytes=15000000"
-      - "traefik.http.routers.backend.middlewares=backend-timeout"
-      - "traefik.http.services.backend.loadbalancer.server.scheme=http"
-      - "traefik.http.services.backend.loadbalancer.responseForwarding.flushInterval=100ms"
     networks:
-      - web
+      - internal
 
 networks:
-  web:
+  internal:
     driver: bridge
