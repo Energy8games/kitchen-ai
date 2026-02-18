@@ -1,9 +1,12 @@
-node_modules
+__pycache__
+*.pyc
+*.pyo
+.venv
 .env
 .env.*
-npm-debug.log
 Dockerfile
 *.md
 .DS_Store
 .vscode
 .idea
+node_modules

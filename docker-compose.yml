@@ -62,7 +62,7 @@ services:
       - web
 
   # ============================================
-  # Backend — Express API
+  # Backend — FastAPI (Python)
   # ============================================
   backend:
     build:
@@ -70,7 +70,6 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      - NODE_ENV=production
       - PORT=5050
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}          # deprecated fallback
