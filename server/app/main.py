@@ -14,7 +14,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from .config import BODY_LIMIT, CORS_ORIGIN, GEMINI_API_KEY, PORT
+from .config import BODY_LIMIT, CORS_ORIGIN, GEMINI_API_KEY, GOOGLE_AI_BASE, PORT
 from .routes import limiter, router
 
 # ── Logging ──────────────────────────────────────────────────────────────
@@ -96,4 +96,8 @@ app.include_router(router)
 async def _startup() -> None:
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY is not set — AI endpoints will fail")
+    if "googleapis.com" not in GOOGLE_AI_BASE:
+        logger.info("Gemini API proxied via: %s", GOOGLE_AI_BASE)
+    else:
+        logger.info("Gemini API: direct access to googleapis.com")
     logger.info("API server listening on %d", PORT)

@@ -44,7 +44,14 @@ ALLOWED_MIME_TYPES: list[str] = [
 ]
 
 # ── Google AI API URLs ───────────────────────────────────────────────────
-GOOGLE_AI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+# Allow proxying through an external server when googleapis.com is blocked
+# (e.g. from Russian IPs). Set GEMINI_PROXY_URL to the proxy base URL.
+_DEFAULT_AI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+GOOGLE_AI_BASE: str = os.getenv("GEMINI_PROXY_URL", "").rstrip("/")
+if GOOGLE_AI_BASE:
+    GOOGLE_AI_BASE = f"{GOOGLE_AI_BASE}/v1beta/models"
+else:
+    GOOGLE_AI_BASE = _DEFAULT_AI_BASE
 
 
 def gemini_url(model: str) -> str:
