@@ -81,17 +81,22 @@ export const fetchVision = async (
 };
 
 export const fetchImage = async (prompt: string): Promise<string | null> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
     const res = await fetch(apiUrl('/api/image'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt }),
+      signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
     const imageBase64 = data?.imageBase64;
     if (typeof imageBase64 === 'string' && imageBase64.startsWith('data:image/')) return imageBase64;
   } catch {
-    // ignore
+    // ignore — timeout or network error
+  } finally {
+    clearTimeout(timeout);
   }
   return null;
 };
